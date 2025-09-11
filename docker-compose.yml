@@ -1,0 +1,203 @@
+version: '3.8'
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - "9870:9870"
+      - "9010:9000"
+    volumes:
+      - namenode_data:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=test-cluster
+    env_file:
+      - ./hadoop.env
+    healthcheck:
+      test: ["CMD", "hadoop", "dfsadmin", "-report"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - hadoop_network
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    restart: always
+    volumes:
+      - datanode_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      namenode:
+        condition: service_healthy
+    networks:
+      - hadoop_network
+    ports:
+      - "9864:9864"
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    restart: always
+    ports:
+      - "8088:8088"
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - namenode
+      - datanode
+    networks:
+      - hadoop_network
+    
+  nodemanager1:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_network
+
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    container_name: historyserver
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+    volumes:
+      - hadoop_historyserver:/hadoop/yarn/timeline
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_network
+
+  spark-master:
+    image: bde2020/spark-master:3.0.0-hadoop3.2
+    container_name: spark-master
+    restart: always
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./notebooks:/opt/spark-apps
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    depends_on:
+      - namenode
+      - resourcemanager
+    networks:
+      - hadoop_network
+    
+  spark-worker:
+    image: bde2020/spark-worker:3.0.0-hadoop3.2
+    container_name: spark-worker
+    restart: always
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    networks:
+      - hadoop_network
+    
+  # Replace MySQL with PostgreSQL for better Hive compatibility
+  postgres:
+    image: postgres:10
+    container_name: postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=hive_metastore
+      - POSTGRES_USER=hiveuser
+      - POSTGRES_PASSWORD=hivepassword
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hiveuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hadoop_network
+
+    
+  # Pre-configured Hive Metastore with PostgreSQL
+  # Hive Metastore with PostgreSQL
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    restart: always
+    ports:
+      - "9083:9083"
+    
+    environment:
+      - HIVE_METASTORE_DB_TYPE=postgres
+      - HIVE_METASTORE_DB_HOST=postgres
+      - HIVE_METASTORE_DB_PORT=5432
+      - HIVE_METASTORE_DB_NAME=hive_metastore
+      - HIVE_METASTORE_DB_USER=hiveuser
+      - HIVE_METASTORE_DB_PASS=hivepassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hadoop_network
+    
+
+  # Hive Server
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    restart: always
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    volumes:
+      - ./hive_conf:/opt/hive/conf
+    environment:
+      - SERVICE_NAME=hiveserver2
+      - HIVE_CONF_DIR=/opt/hive/conf
+      - HIVE_METASTORE_URIS=thrift://hive-metastore:9083
+    depends_on:
+      hive-metastore:
+        condition: service_started
+    networks:
+      - hadoop_network
+
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter
+    restart: always
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./spark-jars:/opt/spark/jars
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - JUPYTER_ENABLE_LAB=yes
+    depends_on:
+      - spark-master
+      - hive-server
+    networks:
+      - hadoop_network
+
+volumes:
+  namenode_data:
+  datanode_data:
+  postgres_data:
+  hadoop_historyserver:
+
+networks:
+  hadoop_network:

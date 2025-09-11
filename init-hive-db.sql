@@ -1,0 +1,5 @@
+CREATE DATABASE IF NOT EXISTS metastore_db;
+
+CREATE USER 'hiveuser'@'%' IDENTIFIED BY 'hivepassword';
+GRANT ALL PRIVILEGES ON metastore_db.* TO 'hiveuser'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
