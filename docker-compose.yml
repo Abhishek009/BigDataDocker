@@ -176,20 +176,40 @@ services:
       - hadoop_network
 
   jupyter:
-    image: jupyter/pyspark-notebook:latest
+    #image: jupyter/pyspark-notebook:latest
+    image: my-jupyter-hadoop
     container_name: jupyter
     restart: always
     ports:
       - "8888:8888"
+      - "8000:8000"
     volumes:
       - ./notebooks:/home/jovyan/work
       - ./spark-jars:/opt/spark/jars
+      - ./hadoop:/opt/hadoop/etc/hadoop
     environment:
       - SPARK_MASTER=spark://spark-master:7077
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop/hadoop-config
       - JUPYTER_ENABLE_LAB=yes
     depends_on:
       - spark-master
       - hive-server
+    networks:
+      - hadoop_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    ports:
+      - "3307:3306"  # Host port 3307 → Container port 3306  
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=sdf_schema
+      #- MYSQL_USER=root
+      #- MYSQL_PASSWORD=root
+    volumes:
+      - mysql_data:/var/lib/mysql
     networks:
       - hadoop_network
 
@@ -198,6 +218,7 @@ volumes:
   datanode_data:
   postgres_data:
   hadoop_historyserver:
+  mysql_data:
 
 networks:
   hadoop_network:
